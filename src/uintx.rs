@@ -1,7 +1,7 @@
 use int_enum::IntEnum;
 use mzsh_bitenum::{BitEnum, BitEnumTrait};
 
-pub(crate) const fn _f_bit_guard<const BITS: u8>() -> bool {
+pub const fn _f_bit_guard<const BITS: u8>() -> bool {
     if !(BITS <= 8 && BITS > 0) {
         panic!("guard evaluated to false")
     }
@@ -9,20 +9,20 @@ pub(crate) const fn _f_bit_guard<const BITS: u8>() -> bool {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct UintX<const BITS: u8>(pub u8)
+pub struct UintX<const BITS: u8>(pub u8)
 where const_guards::Guard<{
     _f_bit_guard::<BITS>()
 }>: const_guards::Protect;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct EnumUIntX<T, const BITS: u8>(pub T)
+pub struct EnumUIntX<T, const BITS: u8>(pub T)
 where T: IntEnum,
 const_guards::Guard<{
     _f_bit_guard::<BITS>()
 }>: const_guards::Protect;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct BitEnumUIntX<T, const BITS: u8>(pub BitEnum<T>)
+pub struct BitEnumUIntX<T, const BITS: u8>(pub BitEnum<T>)
 where T: Sized + int_enum::IntEnum,
 <T as int_enum::IntEnum>::Int: Default,
 <T as int_enum::IntEnum>::Int: bincode::Encode,
@@ -32,7 +32,7 @@ const_guards::Guard<{
     _f_bit_guard::<BITS>()
 }>: const_guards::Protect;
 
-pub(crate) trait BitData
+pub trait BitData
 where Self: Sized
 {
     const BITS: u8;
@@ -98,7 +98,7 @@ const_guards::Guard<{
 }
 
 
-pub(crate) trait BitEncode
+pub trait BitEncode
 where Self: Sized
 {
     const BITS: u8;
