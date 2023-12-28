@@ -23,11 +23,8 @@ const_guards::Guard<{
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BitEnumUIntX<T, const BITS: u8>(pub BitEnum<T>)
-where T: Sized + int_enum::IntEnum + bincode::Encode,
+where T: Sized + int_enum::IntEnum,
 <T as int_enum::IntEnum>::Int: Default,
-<T as int_enum::IntEnum>::Int: bincode::Encode,
-<T as int_enum::IntEnum>::Int: bincode::Decode,
-<T as int_enum::IntEnum>::Int: bincode::BorrowDecode<'static>,
 const_guards::Guard<{
     _f_bit_guard::<BITS>()
 }>: const_guards::Protect;
@@ -76,11 +73,8 @@ const_guards::Guard<{
 }
 
 impl<T, const BITS: u8> BitData for BitEnumUIntX<T, BITS>
-where T: Sized + int_enum::IntEnum + bincode::Encode,
+where T: Sized + int_enum::IntEnum,
 <T as int_enum::IntEnum>::Int: Default,
-<T as int_enum::IntEnum>::Int: bincode::Encode,
-<T as int_enum::IntEnum>::Int: bincode::Decode,
-<T as int_enum::IntEnum>::Int: bincode::BorrowDecode<'static>,
 <T as IntEnum>::Int: num::NumCast,
 const_guards::Guard<{
     _f_bit_guard::<BITS>()
