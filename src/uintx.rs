@@ -134,11 +134,15 @@ const_guards::Guard<{
     const BITS: u8 = BITS;
 
     fn from_u8(data: u8) -> Result<Self, Error> {
-        T::from_int(num::cast(data).unwrap_or_default()).map_err(|_e| Error{
+        Ok( Self( BitEnum::<T>::from_int(num::cast(data).ok_or(Error {
+            value: data,
+            type_name: std::any::type_name::<T>(),
+            text: "cannot cast u8 data",
+        })? ).map_err(|_e| Error{
             value: data,
             type_name: std::any::type_name::<T>(),
             text: "unknown variant",
-        }).map(|x| Self(BitEnum::<T>::from_vec(vec![x])))
+        })? ) )
     }
 
     fn get(&self) -> u8 {
