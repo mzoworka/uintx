@@ -1,6 +1,51 @@
 use int_enum::IntEnum;
 use mzsh_bitenum::{BitEnum, BitEnumTrait};
 
+#[derive(Clone, Copy, Debug)]
+pub struct Error
+{
+    pub value: u8,
+    pub type_name: &'static str,
+    pub text: &'static str,
+}
+
+impl std::fmt::Display for Error
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "uintx error({}): {}, value: {}", self.type_name, self.text, self.value)
+    }
+}
+
+impl From<bincode::error::DecodeError> for Error {
+    fn from(value: bincode::error::DecodeError) -> Self {
+        let (val, type_name, text) = match value {
+            bincode::error::DecodeError::UnexpectedEnd { additional } => (additional as u8, "DecodeError", "UnexpectedEnd"),
+            bincode::error::DecodeError::LimitExceeded => (0u8, "DecodeError", "LimitExceeded"),
+            bincode::error::DecodeError::InvalidIntegerType { expected: _, found: _ } => (0u8, "DecodeError", "InvalidIntegerType"),
+            bincode::error::DecodeError::NonZeroTypeIsZero { non_zero_type: _ } => (0u8, "DecodeError", "NonZeroTypeIsZero"),
+            bincode::error::DecodeError::UnexpectedVariant { type_name, allowed: _, found } => (found as u8, type_name, "UnexpectedVariant"),
+            bincode::error::DecodeError::Utf8 { inner: _ } => (0u8, "DecodeError", "Utf8"),
+            bincode::error::DecodeError::InvalidCharEncoding(_) => (0u8, "DecodeError", "InvalidCharEncoding"),
+            bincode::error::DecodeError::InvalidBooleanValue(_) => (0u8, "DecodeError", "InvalidBooleanValue"),
+            bincode::error::DecodeError::ArrayLengthMismatch { required: _, found } => (found as u8, "DecodeError", "ArrayLengthMismatch"),
+            bincode::error::DecodeError::OutsideUsizeRange(_) => (0u8, "DecodeError", "OutsideUsizeRange"),
+            bincode::error::DecodeError::EmptyEnum { type_name } => (0u8, type_name, "EmptyEnum"),
+            bincode::error::DecodeError::InvalidDuration { secs: _, nanos: _ } => (0u8, "DecodeError", "InvalidDuration"),
+            bincode::error::DecodeError::InvalidSystemTime { duration: _ } => (0u8, "DecodeError", "InvalidSystemTime"),
+            bincode::error::DecodeError::CStringNulError { position } => (position as u8, "DecodeError", "CStringNulError"),
+            bincode::error::DecodeError::Io { inner: _, additional } => (additional as u8, "DecodeError", "Io"),
+            bincode::error::DecodeError::Other( text ) => (0u8, "DecodeError", text),
+            bincode::error::DecodeError::OtherString(_) => (0u8, "DecodeError", "OtherString"),
+            _ => (0u8, "DecodeError", "unknown"),
+        };
+        Self {
+            value: val,
+            type_name,
+            text,
+        }
+    }
+}
+
 pub const fn _f_bit_guard<const BITS: u8>() -> bool {
     if !(BITS <= 8 && BITS > 0) {
         panic!("guard evaluated to false")
@@ -33,7 +78,7 @@ pub trait BitData
 where Self: Sized
 {
     const BITS: u8;
-    fn from_u8(data: u8) -> Option<Self>;
+    fn from_u8(data: u8) -> Result<Self, Error>;
     fn get(&self) -> u8;
 }
 
@@ -44,8 +89,8 @@ where const_guards::Guard<{
 {
     const BITS: u8 = BITS;
     
-    fn from_u8(data: u8) -> Option<Self> {
-        Some(Self(data))
+    fn from_u8(data: u8) -> Result<Self, Error> {
+        Ok(Self(data))
     }
 
     fn get(&self) -> u8 {
@@ -63,8 +108,14 @@ const_guards::Guard<{
 {
     const BITS: u8 = BITS;
     
-    fn from_u8(data: u8) -> Option<Self> {
-        T::from_int(num::cast(data).unwrap_or_default()).ok().map(|x| Self(x))
+    fn from_u8(data: u8) -> Result<Self, Error> {
+        T::from_int(num::cast(data).unwrap_or_default())
+            .map_err(|_e| Error{
+                value: data,
+                type_name: std::any::type_name::<T>(),
+                text: "unknown variant",
+            })
+            .map(|x| Self(x))
     }
 
     fn get(&self) -> u8 {
@@ -82,8 +133,12 @@ const_guards::Guard<{
 {
     const BITS: u8 = BITS;
 
-    fn from_u8(data: u8) -> Option<Self> {
-        T::from_int(num::cast(data).unwrap_or_default()).ok().map(|x| Self(BitEnum::<T>::from_vec(vec![x])))
+    fn from_u8(data: u8) -> Result<Self, Error> {
+        T::from_int(num::cast(data).unwrap_or_default()).map_err(|_e| Error{
+            value: data,
+            type_name: std::any::type_name::<T>(),
+            text: "unknown variant",
+        }).map(|x| Self(BitEnum::<T>::from_vec(vec![x])))
     }
 
     fn get(&self) -> u8 {
@@ -97,13 +152,13 @@ where Self: Sized
 {
     const BITS: u8;
 
-    fn encode(&self) -> Result<Vec<u8>, bincode::error::EncodeError>;
-    fn decode(data: &[u8]) -> Result<Self, bincode::error::DecodeError>;
-    fn decode_from_reader<R: bincode::de::read::Reader>(reader: &mut R) -> Result<Self, bincode::error::DecodeError>
+    fn encode(&self) -> Result<Vec<u8>, Error>;
+    fn decode(data: &[u8]) -> Result<Self, Error>;
+    fn decode_from_reader<R: bincode::de::read::Reader>(reader: &mut R) -> Result<Self, Error>
     where [(); Self::BITS as usize / 8]: ,
     {
         let mut data = [0u8; Self::BITS as usize / 8];
-        R::read(reader, &mut data)?;
+        R::read(reader, &mut data).map_err(|e| <bincode::error::DecodeError as Into<Error>>::into(e))?;
         Self::decode(&data)
     }
 }
@@ -149,7 +204,7 @@ T1: BitData,
 {
     const BITS: u8 = T1::BITS;
 
-    fn encode(&self) -> Result<Vec<u8>, bincode::error::EncodeError>
+    fn encode(&self) -> Result<Vec<u8>, Error>
     {
         let mut buf: [u8; (T1::BITS) as usize / 8] = [0; (T1::BITS) as usize / 8];
         to_buf(&mut buf, self.0.get(), 0, (T1::BITS) as usize);
@@ -157,9 +212,9 @@ T1: BitData,
         Ok(buf.into_iter().collect::<Vec<_>>())
     }
 
-    fn decode(data: &[u8]) -> Result<Self, bincode::error::DecodeError> where Self: Sized {
+    fn decode(data: &[u8]) -> Result<Self, Error> where Self: Sized {
         Ok((
-            T1::from_u8(from_buf(data, 0, (T1::BITS) as usize)).ok_or(bincode::error::DecodeError::Other("BitEncode trait failed, failed to convert from_u8"))?, 
+            T1::from_u8(from_buf(data, 0, (T1::BITS) as usize))?, 
         ))
     }
 }
@@ -172,7 +227,7 @@ T2: BitData,
 {
     const BITS: u8 = T1::BITS + T2::BITS;
 
-    fn encode(&self) -> Result<Vec<u8>, bincode::error::EncodeError> {
+    fn encode(&self) -> Result<Vec<u8>, Error> {
         let mut buf: [u8; (T1::BITS + T2::BITS) as usize / 8] = [0; (T1::BITS + T2::BITS) as usize / 8];
         let offset = to_buf(&mut buf, self.0.get(), 0, (T1::BITS) as usize);
         to_buf(&mut buf, self.1.get(), offset, (T2::BITS) as usize);
@@ -180,10 +235,10 @@ T2: BitData,
         Ok(buf.into_iter().collect::<Vec<_>>())
     }
 
-    fn decode(data: &[u8]) -> Result<Self, bincode::error::DecodeError> where Self: Sized {
+    fn decode(data: &[u8]) -> Result<Self, Error> where Self: Sized {
         Ok((
-            T1::from_u8(from_buf(data, 0, (T1::BITS) as usize)).ok_or(bincode::error::DecodeError::Other("BitEncode trait failed, failed to convert from_u8"))?, 
-            T2::from_u8(from_buf(data, (T1::BITS) as usize, (T2::BITS) as usize)).ok_or(bincode::error::DecodeError::Other("BitEncode trait failed, failed to convert from_u8"))?, 
+            T1::from_u8(from_buf(data, 0, (T1::BITS) as usize))?, 
+            T2::from_u8(from_buf(data, (T1::BITS) as usize, (T2::BITS) as usize))?, 
         ))
     }
 }
@@ -197,7 +252,7 @@ T3: BitData,
 {
     const BITS: u8 = T1::BITS + T2::BITS + T3::BITS;
 
-    fn encode(&self) -> Result<Vec<u8>, bincode::error::EncodeError> {
+    fn encode(&self) -> Result<Vec<u8>, Error> {
         let mut buf: [u8; (T1::BITS + T2::BITS + T3::BITS) as usize / 8] = [0; (T1::BITS + T2::BITS + T3::BITS) as usize / 8];
         let offset = to_buf(&mut buf, self.0.get(), 0, (T1::BITS) as usize);
         let offset = to_buf(&mut buf, self.1.get(), offset, (T2::BITS) as usize);
@@ -206,11 +261,11 @@ T3: BitData,
         Ok(buf.into_iter().collect::<Vec<_>>())
     }
 
-    fn decode(data: &[u8]) -> Result<Self, bincode::error::DecodeError> where Self: Sized {
+    fn decode(data: &[u8]) -> Result<Self, Error> where Self: Sized {
         Ok((
-            T1::from_u8(from_buf(data, 0, (T1::BITS) as usize)).ok_or(bincode::error::DecodeError::Other("BitEncode trait failed, failed to convert from_u8"))?, 
-            T2::from_u8(from_buf(data, (T1::BITS) as usize, (T2::BITS) as usize)).ok_or(bincode::error::DecodeError::Other("BitEncode trait failed, failed to convert from_u8"))?, 
-            T3::from_u8(from_buf(data, (T1::BITS + T2::BITS) as usize, (T3::BITS) as usize)).ok_or(bincode::error::DecodeError::Other("BitEncode trait failed, failed to convert from_u8"))?, 
+            T1::from_u8(from_buf(data, 0, (T1::BITS) as usize))?, 
+            T2::from_u8(from_buf(data, (T1::BITS) as usize, (T2::BITS) as usize))?, 
+            T3::from_u8(from_buf(data, (T1::BITS + T2::BITS) as usize, (T3::BITS) as usize))?, 
         ))
     }
 }
@@ -225,7 +280,7 @@ T4: BitData,
 {
     const BITS: u8 = T1::BITS + T2::BITS + T3::BITS + T4::BITS;
 
-    fn encode(&self) -> Result<Vec<u8>, bincode::error::EncodeError> {
+    fn encode(&self) -> Result<Vec<u8>, Error> {
         let mut buf: [u8; (T1::BITS + T2::BITS + T3::BITS + T4::BITS) as usize / 8] = [0; (T1::BITS + T2::BITS + T3::BITS + T4::BITS) as usize / 8];
         let offset = to_buf(&mut buf, self.0.get(), 0, (T1::BITS) as usize);
         let offset = to_buf(&mut buf, self.1.get(), offset, (T2::BITS) as usize);
@@ -235,12 +290,12 @@ T4: BitData,
         Ok(buf.into_iter().collect::<Vec<_>>())
     }
 
-    fn decode(data: &[u8]) -> Result<Self, bincode::error::DecodeError> where Self: Sized {
+    fn decode(data: &[u8]) -> Result<Self, Error> where Self: Sized {
         Ok((
-            T1::from_u8(from_buf(data, 0, (T1::BITS) as usize)).ok_or(bincode::error::DecodeError::Other("BitEncode trait failed, failed to convert from_u8"))?, 
-            T2::from_u8(from_buf(data, (T1::BITS) as usize, (T2::BITS) as usize)).ok_or(bincode::error::DecodeError::Other("BitEncode trait failed, failed to convert from_u8"))?, 
-            T3::from_u8(from_buf(data, (T1::BITS + T2::BITS) as usize, (T3::BITS) as usize)).ok_or(bincode::error::DecodeError::Other("BitEncode trait failed, failed to convert from_u8"))?, 
-            T4::from_u8(from_buf(data, (T1::BITS + T2::BITS + T3::BITS) as usize, (T4::BITS) as usize)).ok_or(bincode::error::DecodeError::Other("BitEncode trait failed, failed to convert from_u8"))?, 
+            T1::from_u8(from_buf(data, 0, (T1::BITS) as usize))?, 
+            T2::from_u8(from_buf(data, (T1::BITS) as usize, (T2::BITS) as usize))?, 
+            T3::from_u8(from_buf(data, (T1::BITS + T2::BITS) as usize, (T3::BITS) as usize))?, 
+            T4::from_u8(from_buf(data, (T1::BITS + T2::BITS + T3::BITS) as usize, (T4::BITS) as usize))?, 
         ))
     }
 }
@@ -256,7 +311,7 @@ T5: BitData,
 {
     const BITS: u8 = T1::BITS + T2::BITS + T3::BITS + T4::BITS + T5::BITS;
 
-    fn encode(&self) -> Result<Vec<u8>, bincode::error::EncodeError> {
+    fn encode(&self) -> Result<Vec<u8>, Error> {
         let mut buf: [u8; (T1::BITS + T2::BITS + T3::BITS + T4::BITS + T5::BITS) as usize / 8] = [0; (T1::BITS + T2::BITS + T3::BITS + T4::BITS + T5::BITS) as usize / 8];
         let offset = to_buf(&mut buf, self.0.get(), 0, (T1::BITS) as usize);
         let offset = to_buf(&mut buf, self.1.get(), offset, (T2::BITS) as usize);
@@ -267,13 +322,13 @@ T5: BitData,
         Ok(buf.into_iter().collect::<Vec<_>>())
     }
 
-    fn decode(data: &[u8]) -> Result<Self, bincode::error::DecodeError> where Self: Sized {
+    fn decode(data: &[u8]) -> Result<Self, Error> where Self: Sized {
         Ok((
-            T1::from_u8(from_buf(data, 0, (T1::BITS) as usize)).ok_or(bincode::error::DecodeError::Other("BitEncode trait failed, failed to convert from_u8"))?, 
-            T2::from_u8(from_buf(data, (T1::BITS) as usize, (T2::BITS) as usize)).ok_or(bincode::error::DecodeError::Other("BitEncode trait failed, failed to convert from_u8"))?, 
-            T3::from_u8(from_buf(data, (T1::BITS + T2::BITS) as usize, (T3::BITS) as usize)).ok_or(bincode::error::DecodeError::Other("BitEncode trait failed, failed to convert from_u8"))?, 
-            T4::from_u8(from_buf(data, (T1::BITS + T2::BITS + T3::BITS) as usize, (T4::BITS) as usize)).ok_or(bincode::error::DecodeError::Other("BitEncode trait failed, failed to convert from_u8"))?, 
-            T5::from_u8(from_buf(data, (T1::BITS + T2::BITS + T3::BITS + T4::BITS) as usize, (T5::BITS) as usize)).ok_or(bincode::error::DecodeError::Other("BitEncode trait failed, failed to convert from_u8"))?, 
+            T1::from_u8(from_buf(data, 0, (T1::BITS) as usize))?, 
+            T2::from_u8(from_buf(data, (T1::BITS) as usize, (T2::BITS) as usize))?, 
+            T3::from_u8(from_buf(data, (T1::BITS + T2::BITS) as usize, (T3::BITS) as usize))?, 
+            T4::from_u8(from_buf(data, (T1::BITS + T2::BITS + T3::BITS) as usize, (T4::BITS) as usize))?, 
+            T5::from_u8(from_buf(data, (T1::BITS + T2::BITS + T3::BITS + T4::BITS) as usize, (T5::BITS) as usize))?, 
         ))
     }
 }
