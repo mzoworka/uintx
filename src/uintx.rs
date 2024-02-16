@@ -1,5 +1,5 @@
 use int_enum::IntEnum;
-use mzsh_bitenum::{BitEnum, BitEnumTrait};
+use bitenum::{BitEnum, BitEnumTrait};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Error

@@ -11,5 +11,5 @@ serde_json = {}
 int-enum = {}
 bincode = { git = "ssh://git@github.com/bincode-org/bincode.git", version = "2.0.0-rc.3" }
 num = { version="0.4.1" }
-mzsh-bitenum = { git = "ssh://git@github.com/mzoworka/mzsh-bitenum.git" }
+bitenum = { git = "ssh://git@github.com/mzoworka/bitenum.git" }
 const_guards = { version="0.1.3" }
