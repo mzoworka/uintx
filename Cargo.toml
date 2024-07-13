@@ -6,10 +6,10 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-serde = {features = ["derive"]}
-serde_json = {}
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0.96"
 int-enum = { version="0.5.*" }
 bincode = { git = "ssh://git@github.com/bincode-org/bincode.git", version = "2.0.0-rc.3" }
 num = { version="0.4.1" }
-bitenum = { git = "ssh://git@github.com/mzoworka/bitenum.git" }
+bitenum = { git = "ssh://git@bitenum.github.com/mzoworka/bitenum.git" }
 const_guards = { version="0.1.3" }
