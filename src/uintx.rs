@@ -85,22 +85,16 @@ pub const fn _f_bit_guard<const BITS: u8>() -> bool {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct UintX<const BITS: u8>(pub u8)
-where
-    const_guards::Guard<{ _f_bit_guard::<BITS>() }>: const_guards::Protect;
+pub struct UintX<const BITS: u8>(pub u8);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct EnumUIntX<T, const BITS: u8>(pub T)
-where
-    T: IntEnum,
-    const_guards::Guard<{ _f_bit_guard::<BITS>() }>: const_guards::Protect;
+pub struct EnumUIntX<T, const BITS: u8>(pub T);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct BitEnumUIntX<T, const BITS: u8>(pub BitEnum<T>)
 where
     T: Sized + int_enum::IntEnum,
-    <T as int_enum::IntEnum>::Int: Default + for<'a> Deserialize<'a> + Serialize,
-    const_guards::Guard<{ _f_bit_guard::<BITS>() }>: const_guards::Protect;
+    <T as int_enum::IntEnum>::Int: Default + for<'a> Deserialize<'a> + Serialize;
 
 pub trait BitData
 where
@@ -112,8 +106,6 @@ where
 }
 
 impl<const BITS: u8> BitData for UintX<BITS>
-where
-    const_guards::Guard<{ _f_bit_guard::<BITS>() }>: const_guards::Protect,
 {
     const BITS: u8 = BITS;
 
@@ -131,7 +123,6 @@ where
     T: IntEnum,
     <T as IntEnum>::Int: num::NumCast,
     <T as IntEnum>::Int: Default,
-    const_guards::Guard<{ _f_bit_guard::<BITS>() }>: const_guards::Protect,
 {
     const BITS: u8 = BITS;
 
@@ -155,7 +146,6 @@ where
     T: Sized + int_enum::IntEnum,
     <T as int_enum::IntEnum>::Int: Default + for<'a> Deserialize<'a> + Serialize,
     <T as IntEnum>::Int: num::NumCast,
-    const_guards::Guard<{ _f_bit_guard::<BITS>() }>: const_guards::Protect,
 {
     const BITS: u8 = BITS;
 
