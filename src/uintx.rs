@@ -2,6 +2,12 @@ use bitenum::{BitEnum, BitEnumTrait};
 use int_enum::IntEnum;
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Copy)]
+pub enum BitConfig {
+    BitMostByteSeq,
+    BitLeastByteSeq,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Error {
     pub value: u8,
@@ -175,51 +181,80 @@ where
 {
     const BITS: u8;
 
-    fn encode(&self) -> Result<Vec<u8>, Error>;
-    fn decode(data: &[u8]) -> Result<Self, Error>;
-    fn decode_from_reader<R: bincode::de::read::Reader>(reader: &mut R) -> Result<Self, Error>
+    fn encode(&self, config: BitConfig) -> Result<Vec<u8>, Error>;
+    fn decode(data: &[u8], config: BitConfig) -> Result<Self, Error>;
+    fn decode_from_reader<R: bincode::de::read::Reader>(reader: &mut R, config: BitConfig) -> Result<Self, Error>
     where
         [(); Self::BITS as usize / 8]:,
     {
         let mut data = [0u8; Self::BITS as usize / 8];
         R::read(reader, &mut data).map_err(<bincode::error::DecodeError as Into<Error>>::into)?;
-        Self::decode(&data)
+        Self::decode(&data, config)
     }
 }
 
-fn from_buf(buf: &[u8], start: usize, size: usize) -> u8 {
-    let byte_offset = start / 8;
-    let bit_offset = start % 8;
-    let end = bit_offset + size;
-    let mut b1 = buf[byte_offset] & (0xFF >> (bit_offset));
-    let mut b2 = 0;
-    if end <= 8 {
-        b1 >>= 8 - end;
-    } else {
-        b1 <<= size - (16 - end);
-        b2 = buf[byte_offset + 1] >> (16 - end);
+impl BitConfig {
+    fn reverse(b: u8) -> u8 {
+        let b = (b & 0xF0) >> 4 | (b & 0x0F) << 4;
+        let b = (b & 0xCC) >> 2 | (b & 0x33) << 2;
+        (b & 0xAA) >> 1 | (b & 0x55) << 1
+     }
+
+    fn load_bytes(&self, buf: &[u8], start: usize, size: usize) -> u16 {
+        let o1 = start / 8;
+        let o2 = (start+size-1) / 8;
+
+        let b1 =  match self {
+            BitConfig::BitMostByteSeq => buf[o1],
+            BitConfig::BitLeastByteSeq => Self::reverse(buf[o1]),
+        } as u16;
+
+        if o1 != o2 {
+            let b2 =  match self {
+                BitConfig::BitMostByteSeq => buf[o2],
+                BitConfig::BitLeastByteSeq => Self::reverse(buf[o2]),
+            } as u16;
+            b1 << 8 | b2
+        } else {
+            b1 << 8
+        }
     }
 
-    b1 | b2
-}
+    fn from_buf(&self, buf: &[u8], start: usize, size: usize) -> u8 {
+        let data = self.load_bytes(buf, start, size);
 
-fn to_buf(buf: &mut [u8], data: u8, offset: usize, size: usize) -> usize {
-    let current_offset_end = size + (offset % 8);
-    let val = match current_offset_end {
-        x if x <= 8 => (data << (8 - x), None), //fits in the same byte
-        x if x > 8 => (
-            data >> (x - 8),
-            Some((data & (0xFF >> (x - 8))) << (16 - x)),
-        ),
-        _ => panic!("not possible"),
-    };
+        let bit_offset = start % 8;
+        let end = bit_offset + size;
 
-    buf[offset / 8] |= val.0;
-    if let Some(x) = val.1 {
-        buf[(offset / 8) + 1] |= x;
+        let masked = data & (0xFFFF >> bit_offset);
+        let right = masked >> (16-end);
+
+        right as u8
     }
 
-    current_offset_end
+    fn to_buf(&self, buf: &mut [u8], data: u8, offset: usize, size: usize) -> usize {
+        let current_offset_end = size + (offset % 8);
+        let val = match current_offset_end {
+            x if x <= 8 => (data << (8 - x), None), //fits in the same byte
+            x if x > 8 => (
+                data >> (x - 8),
+                Some((data & (0xFF >> (x - 8))) << (16 - x)),
+            ),
+            _ => panic!("not possible"),
+        };
+
+        let (b1, b2) = match self {
+            BitConfig::BitMostByteSeq => (val.0, val.1),
+            BitConfig::BitLeastByteSeq => (Self::reverse(val.0), val.1.map(|x| Self::reverse(x))),
+        };
+
+        buf[offset / 8] |= b1;
+        if let Some(x) = b2 {
+            buf[offset / 8 + 1] |= x;
+        }
+
+        current_offset_end
+    }
 }
 
 impl<T1> BitEncode for (T1,)
@@ -229,18 +264,18 @@ where
 {
     const BITS: u8 = T1::BITS;
 
-    fn encode(&self) -> Result<Vec<u8>, Error> {
+    fn encode(&self, config: BitConfig) -> Result<Vec<u8>, Error> {
         let mut buf: [u8; (T1::BITS) as usize / 8] = [0; (T1::BITS) as usize / 8];
-        to_buf(&mut buf, self.0.get(), 0, (T1::BITS) as usize);
+        config.to_buf(&mut buf, self.0.get(), 0, (T1::BITS) as usize);
 
         Ok(buf.into_iter().collect::<Vec<_>>())
     }
 
-    fn decode(data: &[u8]) -> Result<Self, Error>
+    fn decode(data: &[u8], config: BitConfig) -> Result<Self, Error>
     where
         Self: Sized,
     {
-        Ok((T1::from_u8(from_buf(data, 0, (T1::BITS) as usize))?,))
+        Ok((T1::from_u8(config.from_buf(data, 0, (T1::BITS) as usize))?,))
     }
 }
 
@@ -252,22 +287,22 @@ where
 {
     const BITS: u8 = T1::BITS + T2::BITS;
 
-    fn encode(&self) -> Result<Vec<u8>, Error> {
+    fn encode(&self, config: BitConfig) -> Result<Vec<u8>, Error> {
         let mut buf: [u8; (T1::BITS + T2::BITS) as usize / 8] =
             [0; (T1::BITS + T2::BITS) as usize / 8];
-        let offset = to_buf(&mut buf, self.0.get(), 0, (T1::BITS) as usize);
-        to_buf(&mut buf, self.1.get(), offset, (T2::BITS) as usize);
+        let offset = config.to_buf(&mut buf, self.0.get(), 0, (T1::BITS) as usize);
+        config.to_buf(&mut buf, self.1.get(), offset, (T2::BITS) as usize);
 
         Ok(buf.into_iter().collect::<Vec<_>>())
     }
 
-    fn decode(data: &[u8]) -> Result<Self, Error>
+    fn decode(data: &[u8], config: BitConfig) -> Result<Self, Error>
     where
         Self: Sized,
     {
         Ok((
-            T1::from_u8(from_buf(data, 0, (T1::BITS) as usize))?,
-            T2::from_u8(from_buf(data, (T1::BITS) as usize, (T2::BITS) as usize))?,
+            T1::from_u8(config.from_buf(data, 0, (T1::BITS) as usize))?,
+            T2::from_u8(config.from_buf(data, (T1::BITS) as usize, (T2::BITS) as usize))?,
         ))
     }
 }
@@ -281,24 +316,24 @@ where
 {
     const BITS: u8 = T1::BITS + T2::BITS + T3::BITS;
 
-    fn encode(&self) -> Result<Vec<u8>, Error> {
+    fn encode(&self, config: BitConfig) -> Result<Vec<u8>, Error> {
         let mut buf: [u8; (T1::BITS + T2::BITS + T3::BITS) as usize / 8] =
             [0; (T1::BITS + T2::BITS + T3::BITS) as usize / 8];
-        let offset = to_buf(&mut buf, self.0.get(), 0, (T1::BITS) as usize);
-        let offset = to_buf(&mut buf, self.1.get(), offset, (T2::BITS) as usize);
-        to_buf(&mut buf, self.2.get(), offset, (T3::BITS) as usize);
+        let offset = config.to_buf(&mut buf, self.0.get(), 0, (T1::BITS) as usize);
+        let offset = config.to_buf(&mut buf, self.1.get(), offset, (T2::BITS) as usize);
+        config.to_buf(&mut buf, self.2.get(), offset, (T3::BITS) as usize);
 
         Ok(buf.into_iter().collect::<Vec<_>>())
     }
 
-    fn decode(data: &[u8]) -> Result<Self, Error>
+    fn decode(data: &[u8], config: BitConfig) -> Result<Self, Error>
     where
         Self: Sized,
     {
         Ok((
-            T1::from_u8(from_buf(data, 0, (T1::BITS) as usize))?,
-            T2::from_u8(from_buf(data, (T1::BITS) as usize, (T2::BITS) as usize))?,
-            T3::from_u8(from_buf(
+            T1::from_u8(config.from_buf(data, 0, (T1::BITS) as usize))?,
+            T2::from_u8(config.from_buf(data, (T1::BITS) as usize, (T2::BITS) as usize))?,
+            T3::from_u8(config.from_buf(
                 data,
                 (T1::BITS + T2::BITS) as usize,
                 (T3::BITS) as usize,
@@ -317,30 +352,30 @@ where
 {
     const BITS: u8 = T1::BITS + T2::BITS + T3::BITS + T4::BITS;
 
-    fn encode(&self) -> Result<Vec<u8>, Error> {
+    fn encode(&self, config: BitConfig) -> Result<Vec<u8>, Error> {
         let mut buf: [u8; (T1::BITS + T2::BITS + T3::BITS + T4::BITS) as usize / 8] =
             [0; (T1::BITS + T2::BITS + T3::BITS + T4::BITS) as usize / 8];
-        let offset = to_buf(&mut buf, self.0.get(), 0, (T1::BITS) as usize);
-        let offset = to_buf(&mut buf, self.1.get(), offset, (T2::BITS) as usize);
-        let offset = to_buf(&mut buf, self.2.get(), offset, (T3::BITS) as usize);
-        to_buf(&mut buf, self.3.get(), offset, (T4::BITS) as usize);
+        let offset = config.to_buf(&mut buf, self.0.get(), 0, (T1::BITS) as usize);
+        let offset = config.to_buf(&mut buf, self.1.get(), offset, (T2::BITS) as usize);
+        let offset = config.to_buf(&mut buf, self.2.get(), offset, (T3::BITS) as usize);
+        config.to_buf(&mut buf, self.3.get(), offset, (T4::BITS) as usize);
 
         Ok(buf.into_iter().collect::<Vec<_>>())
     }
 
-    fn decode(data: &[u8]) -> Result<Self, Error>
+    fn decode(data: &[u8], config: BitConfig) -> Result<Self, Error>
     where
         Self: Sized,
     {
         Ok((
-            T1::from_u8(from_buf(data, 0, (T1::BITS) as usize))?,
-            T2::from_u8(from_buf(data, (T1::BITS) as usize, (T2::BITS) as usize))?,
-            T3::from_u8(from_buf(
+            T1::from_u8(config.from_buf(data, 0, (T1::BITS) as usize))?,
+            T2::from_u8(config.from_buf(data, (T1::BITS) as usize, (T2::BITS) as usize))?,
+            T3::from_u8(config.from_buf(
                 data,
                 (T1::BITS + T2::BITS) as usize,
                 (T3::BITS) as usize,
             ))?,
-            T4::from_u8(from_buf(
+            T4::from_u8(config.from_buf(
                 data,
                 (T1::BITS + T2::BITS + T3::BITS) as usize,
                 (T4::BITS) as usize,
@@ -360,36 +395,36 @@ where
 {
     const BITS: u8 = T1::BITS + T2::BITS + T3::BITS + T4::BITS + T5::BITS;
 
-    fn encode(&self) -> Result<Vec<u8>, Error> {
+    fn encode(&self, config: BitConfig) -> Result<Vec<u8>, Error> {
         let mut buf: [u8; (T1::BITS + T2::BITS + T3::BITS + T4::BITS + T5::BITS) as usize / 8] =
             [0; (T1::BITS + T2::BITS + T3::BITS + T4::BITS + T5::BITS) as usize / 8];
-        let offset = to_buf(&mut buf, self.0.get(), 0, (T1::BITS) as usize);
-        let offset = to_buf(&mut buf, self.1.get(), offset, (T2::BITS) as usize);
-        let offset = to_buf(&mut buf, self.2.get(), offset, (T3::BITS) as usize);
-        let offset = to_buf(&mut buf, self.3.get(), offset, (T4::BITS) as usize);
-        to_buf(&mut buf, self.4.get(), offset, (T5::BITS) as usize);
+        let offset = config.to_buf(&mut buf, self.0.get(), 0, (T1::BITS) as usize);
+        let offset = config.to_buf(&mut buf, self.1.get(), offset, (T2::BITS) as usize);
+        let offset = config.to_buf(&mut buf, self.2.get(), offset, (T3::BITS) as usize);
+        let offset = config.to_buf(&mut buf, self.3.get(), offset, (T4::BITS) as usize);
+        config.to_buf(&mut buf, self.4.get(), offset, (T5::BITS) as usize);
 
         Ok(buf.into_iter().collect::<Vec<_>>())
     }
 
-    fn decode(data: &[u8]) -> Result<Self, Error>
+    fn decode(data: &[u8], config: BitConfig) -> Result<Self, Error>
     where
         Self: Sized,
     {
         Ok((
-            T1::from_u8(from_buf(data, 0, (T1::BITS) as usize))?,
-            T2::from_u8(from_buf(data, (T1::BITS) as usize, (T2::BITS) as usize))?,
-            T3::from_u8(from_buf(
+            T1::from_u8(config.from_buf(data, 0, (T1::BITS) as usize))?,
+            T2::from_u8(config.from_buf(data, (T1::BITS) as usize, (T2::BITS) as usize))?,
+            T3::from_u8(config.from_buf(
                 data,
                 (T1::BITS + T2::BITS) as usize,
                 (T3::BITS) as usize,
             ))?,
-            T4::from_u8(from_buf(
+            T4::from_u8(config.from_buf(
                 data,
                 (T1::BITS + T2::BITS + T3::BITS) as usize,
                 (T4::BITS) as usize,
             ))?,
-            T5::from_u8(from_buf(
+            T5::from_u8(config.from_buf(
                 data,
                 (T1::BITS + T2::BITS + T3::BITS + T4::BITS) as usize,
                 (T5::BITS) as usize,
