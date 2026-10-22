@@ -111,8 +111,7 @@ where
     fn get(&self) -> u8;
 }
 
-impl<const BITS: u8> BitData for UintX<BITS>
-{
+impl<const BITS: u8> BitData for UintX<BITS> {
     const BITS: u8 = BITS;
 
     fn from_u8(data: u8) -> Result<Self, Error> {
@@ -175,6 +174,7 @@ where
     }
 }
 
+
 pub trait BitEncode
 where
     Self: Sized,
@@ -183,7 +183,10 @@ where
 
     fn encode(&self, config: BitConfig) -> Result<Vec<u8>, Error>;
     fn decode(data: &[u8], config: BitConfig) -> Result<Self, Error>;
-    fn decode_from_reader<R: bincode::de::read::Reader>(reader: &mut R, config: BitConfig) -> Result<Self, Error>
+    fn decode_from_reader<R: bincode::de::read::Reader>(
+        reader: &mut R,
+        config: BitConfig,
+    ) -> Result<Self, Error>
     where
         [(); Self::BITS as usize / 8]:,
     {
@@ -198,19 +201,19 @@ impl BitConfig {
         let b = (b & 0xF0) >> 4 | (b & 0x0F) << 4;
         let b = (b & 0xCC) >> 2 | (b & 0x33) << 2;
         (b & 0xAA) >> 1 | (b & 0x55) << 1
-     }
+    }
 
     fn load_bytes(&self, buf: &[u8], start: usize, size: usize) -> u16 {
         let o1 = start / 8;
-        let o2 = (start+size-1) / 8;
+        let o2 = (start + size - 1) / 8;
 
-        let b1 =  match self {
+        let b1 = match self {
             BitConfig::BitMostByteSeq => buf[o1],
             BitConfig::BitLeastByteSeq => Self::reverse(buf[o1]),
         } as u16;
 
         if o1 != o2 {
-            let b2 =  match self {
+            let b2 = match self {
                 BitConfig::BitMostByteSeq => buf[o2],
                 BitConfig::BitLeastByteSeq => Self::reverse(buf[o2]),
             } as u16;
@@ -227,7 +230,7 @@ impl BitConfig {
         let end = bit_offset + size;
 
         let masked = data & (0xFFFF >> bit_offset);
-        let right = masked >> (16-end);
+        let right = masked >> (16 - end);
 
         right as u8
     }
@@ -245,7 +248,7 @@ impl BitConfig {
 
         let (b1, b2) = match self {
             BitConfig::BitMostByteSeq => (val.0, val.1),
-            BitConfig::BitLeastByteSeq => (Self::reverse(val.0), val.1.map(|x| Self::reverse(x))),
+            BitConfig::BitLeastByteSeq => (Self::reverse(val.0), val.1.map(Self::reverse)),
         };
 
         buf[offset / 8] |= b1;

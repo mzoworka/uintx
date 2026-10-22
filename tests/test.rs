@@ -14,7 +14,7 @@ fn test_most() -> Result<(), String> {
         Err(e) => Err(e.to_string())?,
     };
     assert_eq!(usv, [166u8, 198u8]);
-    
+
     //101 0011 01100 0110
     //10100110 11000110
     let usd: Result<(UintX<3>, UintX<4>, UintX<5>, UintX<4>), _> =
@@ -39,7 +39,7 @@ fn test_least() -> Result<(), String> {
         Err(e) => Err(e.to_string())?,
     };
     assert_eq!(usv, [101u8, 99u8]);
-    
+
     //0011 101 0110 01100
     //01100101 01100011
     let usd: Result<(UintX<3>, UintX<4>, UintX<5>, UintX<4>), _> =
